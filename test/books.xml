@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog>
+  <book id="b1">
+    <title>Microservices Security in Action</title>
+    <author>Siriwardena, Prabath</author>
+    <price>49.95</price>
+    <genre>Tech</genre>
+  </book>
+  <book id="b2">
+    <title>Design Patterns for Cloud Native Applications</title>
+    <author>Indrasiri, Kasun</author>
+    <price>49.99</price>
+    <genre>Tech</genre>
+  </book>
+  <book id="b3">
+    <title>XSLT 2.0 and XPath 2.0 Programmer's Reference</title>
+    <author>Kay, Michael</author>
+    <price>49.50</price>
+    <genre>Career</genre>
+  </book>
+</catalog>

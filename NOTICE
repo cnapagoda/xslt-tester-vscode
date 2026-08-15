@@ -1,0 +1,16 @@
+XSLT Tester (1.0 / 2.0) — VS Code extension
+Copyright 2026 Chandana Napagoda
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this software except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product bundles Saxon-JS and xslt3, which are Copyright (c) Saxonica Ltd
+(https://www.saxonica.com/) and are distributed under Saxonica's own license,
+NOT under the Apache License. See THIRD-PARTY-NOTICES.md for the full
+Saxonica license text and disclaimer.
+
+The optional libxslt engine invokes the user's locally installed xsltproc
+executable; no libxslt/libxml2 code is bundled with this product.

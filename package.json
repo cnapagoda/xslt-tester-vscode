@@ -1,0 +1,148 @@
+{
+  "name": "xslt-tester",
+  "displayName": "XSLT Tester (1.0 / 2.0)",
+  "description": "Test XSLT 1.0 and XSLT 2.0 transformations: provide XML input and an XSLT stylesheet, see the result instantly. Dual engines: bundled Saxon-JS (© Saxonica Ltd, distributed under the Saxonica license — see THIRD-PARTY-NOTICES.md) and native libxslt (xsltproc) with EXSLT support.",
+  "version": "1.2.0",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0d2137",
+    "theme": "dark"
+  },
+  "publisher": "CNapagoda",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cnapagoda/xslt-tester-vscode.git"
+  },
+  "categories": [
+    "Programming Languages",
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "xslt",
+    "xsl",
+    "xml",
+    "transform",
+    "saxon",
+    "xslt2",
+    "libxslt",
+    "xsltproc",
+    "exslt"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "xsltTester.openPlayground",
+        "title": "XSLT Tester: Open Playground"
+      },
+      {
+        "command": "xsltTester.runTransformation",
+        "title": "XSLT Tester: Run Transformation (pick XML + XSLT files)"
+      },
+      {
+        "command": "xsltTester.runActiveFile",
+        "title": "XSLT Tester: Run Transformation with Active File"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "xsltTester.runTransformation",
+          "when": "resourceExtname =~ /\\.(xslt?|xml)$/i",
+          "group": "xsltTester"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "xsltTester.runActiveFile",
+          "when": "resourceExtname =~ /\\.(xslt?|xml)$/i",
+          "group": "xsltTester"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "xsltTester.runActiveFile",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "XSLT Tester",
+      "properties": {
+        "xsltTester.engine": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "saxon",
+            "libxslt"
+          ],
+          "enumDescriptions": [
+            "XSLT 1.0 stylesheets use libxslt (when xsltproc is installed) for authentic 1.0/EXSLT semantics; XSLT 2.0+ uses Saxon-JS.",
+            "Always use the bundled Saxon-JS processor (XSLT 3.0; runs 2.0 natively, 1.0 in backwards-compatible mode).",
+            "Always use libxslt via the xsltproc executable (XSLT 1.0 + EXSLT only)."
+          ],
+          "default": "auto",
+          "description": "Which XSLT engine to use for transformations."
+        },
+        "xsltTester.xsltprocPath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to the xsltproc executable (libxslt). Leave empty to auto-detect from PATH and common install locations."
+        },
+        "xsltTester.extraXsltprocArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra command-line arguments passed to xsltproc (e.g. [\"--nonet\"], [\"--timing\"])."
+        },
+        "xsltTester.outputTarget": {
+          "type": "string",
+          "enum": [
+            "editor",
+            "file"
+          ],
+          "default": "editor",
+          "description": "Where to show transformation results for file-based runs: a new editor tab, or a file written next to the XML input."
+        },
+        "xsltTester.extraSaxonArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra command-line arguments passed to the Saxon-JS xslt3 processor (e.g. [\"-t\"] for timing info)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p ./ --noEmit",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
+    "build": "npm run typecheck && npm run clean && esbuild src/extension.ts --bundle --external:vscode --platform=node --target=node16 --outfile=out/extension.js --minify && node -e \"require('fs').copyFileSync('src/saxon-worker.js','out/saxon-worker.js')\"",
+    "compile": "npm run build",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "saxon-js": "^2.7.0",
+    "xslt3": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,13 @@
+.vscode/**
+src/**
+media/*.svg
+test/**
+out/**/*.map
+tsconfig.json
+package-lock.json
+**/*.ts
+.gitignore
+node_modules/.bin/**
+node_modules/@types/**
+node_modules/typescript/**
+node_modules/@vscode/**
