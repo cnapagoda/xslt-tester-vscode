@@ -138,6 +138,19 @@ interface WorkerResponse {
   poisoned?: boolean;
 }
 
+/** Wall-clock limit for a single transformation. */
+const PROCESS_TIMEOUT_MS = 60_000;
+/** Parent-side limit for a worker request; slightly longer than the worker's own limit. */
+const WORKER_TIMEOUT_MS = PROCESS_TIMEOUT_MS + 5_000;
+const TIMEOUT_MESSAGE = '[XSLT Tester] Transformation timed out after 60 seconds.';
+
+/**
+ * The request never reached a working Saxon worker (spawn failed, or the
+ * worker died before finishing start-up), so the transformation did not
+ * run and it is safe to retry it in a fresh process.
+ */
+class WorkerUnavailableError extends Error {}
+
 /**
  * Manages a long-lived child process that keeps Saxon-JS loaded in memory.
  * Cold spawn-per-run costs ~500-1500 ms (mostly parsing Saxon's 2.4 MB
@@ -146,11 +159,18 @@ interface WorkerResponse {
 class SaxonWorker {
   private child: cp.ChildProcess | undefined;
   private pending = new Map<number, {
+    child: cp.ChildProcess;
     resolve: (r: WorkerResponse) => void;
     reject: (e: Error) => void;
     timer: NodeJS.Timeout;
   }>();
   private nextId = 1;
+  /**
+   * Requests are dispatched one at a time (the worker is single-threaded
+   * anyway), so each request's timeout covers only its own execution and
+   * not time spent queued behind a slow predecessor.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly workerScript: string,
@@ -192,9 +212,13 @@ class SaxonWorker {
       windowsHide: true,
       stdio: ['ignore', 'ignore', 'ignore', 'ipc']
     });
+    // The worker announces { type: 'ready' } once Saxon-JS is loaded; dying
+    // before that means it never ran any request.
+    let ready = false;
     child.on('message', (raw) => {
-      const res = raw as WorkerResponse;
-      if (typeof res.id !== 'number') { return; }
+      const res = raw as WorkerResponse & { type?: string };
+      if (res && res.type === 'ready') { ready = true; return; }
+      if (!res || typeof res.id !== 'number') { return; }
       const p = this.pending.get(res.id);
       if (p) {
         this.pending.delete(res.id);
@@ -205,9 +229,12 @@ class SaxonWorker {
     const onGone = () => {
       if (this.child === child) { this.child = undefined; }
       for (const [id, p] of this.pending) {
+        if (p.child !== child) { continue; }
         this.pending.delete(id);
         clearTimeout(p.timer);
-        p.reject(new Error('Saxon worker exited unexpectedly'));
+        p.reject(ready
+          ? new Error('[XSLT Tester] The Saxon worker exited unexpectedly during the transformation.')
+          : new WorkerUnavailableError('Saxon worker failed to start'));
       }
     };
     child.on('exit', onGone);
@@ -217,21 +244,33 @@ class SaxonWorker {
   }
 
   run(args: string[], cwd: string): Promise<WorkerResponse> {
-    const child = this.ensureChild();
+    const result = this.queue.then(() => this.dispatch(args, cwd));
+    this.queue = result.catch(() => undefined);
+    return result;
+  }
+
+  private dispatch(args: string[], cwd: string): Promise<WorkerResponse> {
+    let child: cp.ChildProcess;
+    try {
+      child = this.ensureChild();
+    } catch (err) {
+      return Promise.reject(new WorkerUnavailableError(String(err)));
+    }
     const id = this.nextId++;
     return new Promise<WorkerResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
+        // A synchronous runaway transformation blocks the worker's own
+        // timeout, so the parent enforces the limit by killing it.
         this.pending.delete(id);
-        this.child?.kill();
-        this.child = undefined;
-        reject(new Error('Saxon worker request timed out'));
-      }, 65_000);
-      this.pending.set(id, { resolve, reject, timer });
+        if (this.child === child) { this.child = undefined; }
+        child.kill();
+        reject(new Error(TIMEOUT_MESSAGE));
+      }, WORKER_TIMEOUT_MS);
+      this.pending.set(id, { child, resolve, reject, timer });
       child.send({ id, args, cwd }, (err) => {
-        if (err) {
-          this.pending.delete(id);
+        if (err && this.pending.delete(id)) {
           clearTimeout(timer);
-          reject(err);
+          reject(new WorkerUnavailableError(err.message));
         }
       });
     });
@@ -300,13 +339,27 @@ async function runSaxonViaWorker(
     return {
       ok: res.code === 0,
       output: res.stdout,
-      diagnostics: stripWorkerNoise(res.stderr, extraArgs.includes('-t')),
+      diagnostics: [
+        stripWorkerNoise(res.stderr, extraArgs.includes('-t')),
+        res.poisoned ? TIMEOUT_MESSAGE : ''
+      ].filter(Boolean).join('\n'),
       detectedVersion,
       engineUsed: 'saxon',
       elapsedMs: Date.now() - started
     };
-  } catch {
-    return null; // fall back to spawn-per-run
+  } catch (err) {
+    // Only retry in a fresh process when the transformation never ran;
+    // re-running after a timeout or crash would double the wait and repeat
+    // side effects such as xsl:result-document writes.
+    if (err instanceof WorkerUnavailableError) { return null; }
+    return {
+      ok: false,
+      output: '',
+      diagnostics: err instanceof Error ? err.message : String(err),
+      detectedVersion,
+      engineUsed: 'saxon',
+      elapsedMs: Date.now() - started
+    };
   }
 }
 
@@ -334,23 +387,32 @@ function runProcess(
       windowsHide: true
     });
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
-    child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+    // Collect raw bytes and decode once at the end: decoding each chunk
+    // separately corrupts multi-byte UTF-8 characters split across chunks.
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout.on('data', (d: Buffer) => stdoutChunks.push(d));
+    child.stderr.on('data', (d: Buffer) => stderrChunks.push(d));
 
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill();
-      stderr += '\n[XSLT Tester] Transformation timed out after 60 seconds.';
-    }, 60_000);
+    }, PROCESS_TIMEOUT_MS);
 
+    let settled = false;
     const finish = (ok: boolean, extraDiag?: string) => {
+      if (settled) { return; }
+      settled = true;
       clearTimeout(timer);
       try { cleanup?.(); } catch { /* best effort */ }
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
       resolve({
         ok,
-        output: stdout,
-        diagnostics: [stderr.trim(), extraDiag].filter(Boolean).join('\n'),
+        output: Buffer.concat(stdoutChunks).toString('utf8'),
+        diagnostics: [stderr, timedOut ? TIMEOUT_MESSAGE : '', extraDiag]
+          .filter(Boolean)
+          .join('\n'),
         detectedVersion: meta.detectedVersion,
         engineUsed: meta.engineUsed,
         elapsedMs: Date.now() - started

@@ -99,19 +99,26 @@ function openPlayground(context: vscode.ExtensionContext) {
     return;
   }
 
-  playgroundPanel = vscode.window.createWebviewPanel(
+  const panel = vscode.window.createWebviewPanel(
     'xsltTester.playground',
     'XSLT Playground',
     vscode.ViewColumn.One,
     { enableScripts: true, retainContextWhenHidden: true }
   );
+  playgroundPanel = panel;
 
   const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  playgroundPanel.webview.html = getPlaygroundHtml(nonce);
+  panel.webview.html = getPlaygroundHtml(nonce);
 
-  playgroundPanel.onDidDispose(() => (playgroundPanel = undefined), null, context.subscriptions);
+  // Handlers below refer to this panel, never the module-level variable, so a
+  // run that finishes after the panel was closed (or replaced) is dropped.
+  let disposed = false;
+  panel.onDidDispose(() => {
+    disposed = true;
+    if (playgroundPanel === panel) { playgroundPanel = undefined; }
+  }, null, context.subscriptions);
 
-  playgroundPanel.webview.onDidReceiveMessage(
+  panel.webview.onDidReceiveMessage(
     async (msg: {
       type: string;
       xml?: string;
@@ -119,7 +126,7 @@ function openPlayground(context: vscode.ExtensionContext) {
       sample?: string;
       engine?: EnginePreference;
     }) => {
-      if (!playgroundPanel) { return; }
+      if (disposed) { return; }
 
       if (msg.type === 'ready') {
         notifyEngineStatus();
@@ -131,14 +138,15 @@ function openPlayground(context: vscode.ExtensionContext) {
           msg.engine ?? 'auto'
         );
         logResult('Playground', result);
-        playgroundPanel.webview.postMessage({ type: 'result', ...result });
+        if (disposed) { return; }
+        panel.webview.postMessage({ type: 'result', ...result });
       } else if (msg.type === 'loadSample') {
         const xslt =
           msg.sample === 'v1' ? SAMPLE_XSLT_10 :
           msg.sample === 'v1exslt' ? SAMPLE_XSLT_10_EXSLT :
           msg.sample === 'v2csv' ? SAMPLE_XSLT_20_CSV :
           SAMPLE_XSLT_20;
-        playgroundPanel.webview.postMessage({ type: 'sample', xml: SAMPLE_XML, xslt });
+        panel.webview.postMessage({ type: 'sample', xml: SAMPLE_XML, xslt });
       }
     },
     null,
